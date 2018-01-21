@@ -195,7 +195,7 @@ if __name__ == "__main__":
     print(vectors.syn0.shape)
     assert np.allclose(vectors[u"我"], vectors.syn0[6, :])
     assert np.allclose(np.linalg.norm(vectors[u"我"]), 1.0)
-    print(u"Frequence and word ID of 我", vectors.vocab[u"我"].count, vectors.vocab[u"我"].index)
+    print(u"Frequency and word ID of 我", vectors.vocab[u"我"].count, vectors.vocab[u"我"].index)
 
     sa = u"凡有 产业 的 单身汉 ， 总要 娶 位 太太 ， 这 已经 成 了 一条 举世公认 的 真理 。 "
     sb = u"有钱 的 单身汉 总要 娶 位 太太 ， 这是 一条 举世公认 的 真理 。"
