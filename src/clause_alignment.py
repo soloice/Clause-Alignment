@@ -40,22 +40,22 @@ def chinese_sentence_segmentation(sentence):
     return sentences
 
 
-def show_sentence(sent):
+def convert_sentence_to_unicode_string(sent):
     if type(sent) == unicode:
         # A unicode string, e.g.: "我 爱 你 ， 因为 你 独一无二 。"
-        print(sent)
+        # print(sent)
         return sent
     elif type(sent[0]) == unicode:
         # A list of unicode strings, e.g.: ["我", "爱", "你", "，", "因为", "你", "独一无二", "。"]
         content = " ".join(sent)
-        print(content)
+        # print(content)
         return content
     else:
         # A list of unicode string lists, e.g.: [["我", "爱", "你", "，"], ["因为", "你", "独一无二", "。"]]
         # chinese_sentence_segmentation(sentence) 的返回类型就是这种
         assert type(sent[0]) == list and type(sent[0][0]) == unicode
         content = "///".join([" ".join(c) for c in sent])
-        print(content)
+        # print(content)
         return content
 
 
@@ -74,9 +74,11 @@ def calculate_score(word_vector, clause1, clause2):
             similarities.append(np.dot(word_vector[w1], word_vector[w2]))
             # print(w1, w2, similarities[-1])
     similarities.sort()
-    top_k = 5
+    similarities = similarities[::-1]
+    top_k = min([5, len(clause1), len(clause2)])
+
     if len(similarities) > top_k:
-        score = sum(similarities[-top_k:]) / top_k
+        score = sum(similarities[:top_k]) / (top_k + 1e-4)
     else:
         score = sum(similarities) / (len(similarities) + 1e-4)
 
@@ -100,8 +102,8 @@ def align_sentence_pair(word_vector, s1, s2, D=2, verbose=False):
     s1_clauses = chinese_sentence_segmentation(s1)
     s2_clauses = chinese_sentence_segmentation(s2)
 
-    s1c = show_sentence(s1_clauses)
-    s2c = show_sentence(s2_clauses)
+    s1c = convert_sentence_to_unicode_string(s1_clauses)
+    s2c = convert_sentence_to_unicode_string(s2_clauses)
 
 
     l1, l2 = len(s1_clauses), len(s2_clauses)
@@ -159,10 +161,22 @@ def align_sentence_pair(word_vector, s1, s2, D=2, verbose=False):
             print(pulp.value(align_problem.objective))
         # 提取匹配结果
         result = []
-        for v in matching_vars:
-            if matching_vars[v].varValue > 0.5: # 即值为 1
-                result.append(matching_vars[v].name[len("clause_pairs_"):])
-        return " ".join(result), s1c, s2c
+        for j in range(l1):
+            for k in range(l2):
+                if matching_vars[j, k].varValue > 0.5: # 即值为 1
+                    result.append(str(j) + "-" + str(k))
+
+        result = ", ".join(result)
+
+        # print(result)
+        # input("---------------\n")
+
+        # 下面这种方式输出是乱序的
+        # for v in matching_vars:
+        #     if matching_vars[v].varValue > 0.5: # 即值为 1
+        #         result.append(matching_vars[v].name[len("clause_pairs_"):])
+        # result = " ".join(result)
+        return result, s1c, s2c
     else:
         print("Not converged!", pulp.LpStatus[align_problem.status])
         return "Matching Error!", "", ""
@@ -182,7 +196,7 @@ def align_all_corpus(word_vector, corpus1, corpus2, output_file):
 
                     cnt += 1
                     if cnt % 100 == 0:
-                        print("Processed " + str(cnt) + " lines.\n\n")
+                        print("Processed " + str(cnt) + " lines.")
 
 
 if __name__ == "__main__":
@@ -202,7 +216,7 @@ if __name__ == "__main__":
     align_sentence_pair(vectors, sa, sb, verbose=True)
     print("=====================")
 
-    # align_all_corpus(vectors,
-    #                  "../data/pp/all-trans-pairs/src.txt.aligned",
-    #                  "../data/pp/all-trans-pairs/tgt.txt.aligned",
-    #                  output_file="../data/pp/all-trans-pairs/clause.align")
+    align_all_corpus(vectors,
+                     "../data/pp/all-trans-pairs/src.txt.aligned",
+                     "../data/pp/all-trans-pairs/tgt.txt.aligned",
+                     output_file="../data/pp/all-trans-pairs/clause.align.v2")
