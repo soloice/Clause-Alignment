@@ -202,7 +202,7 @@ if __name__ == "__main__":
     align_sentence_pair(vectors, sa, sb, verbose=True)
     print("=====================")
 
-    # align_all_corpus(vectors,
-    #                  "../data/pp/all-trans-pairs/src.txt.aligned",
-    #                  "../data/pp/all-trans-pairs/tgt.txt.aligned",
-    #                  output_file="../data/pp/all-trans-pairs/clause.align")
+    align_all_corpus(vectors,
+                     "../data/pp/all-trans-pairs/src.txt.aligned",
+                     "../data/pp/all-trans-pairs/tgt.txt.aligned",
+                     output_file="../data/pp/all-trans-pairs/clause.align.v1")
