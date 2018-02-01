@@ -3,29 +3,24 @@ from __future__ import print_function
 from __future__ import division
 import pulp
 import numpy as np
-from gensim.models.keyedvectors import KeyedVectors
 import pickle
+import os
 import argparse
 import codecs
 
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--embedding_pickle_path", type=str,
-                    default="../data/pp/all-trans-pairs/embedding.pkl",
-                    help="Path to embedding pickle file.")
+parser.add_argument("--data_dir", type=str, default="../data/pp/all-trans-pairs/", help="Data folder.")
+parser.add_argument("--embedding", type=str,
+                    default="embedding.pkl", help="Embedding pickle file name.")
 parser.add_argument("--corpus1", type=str,
-                    default="../data/pp/all-trans-pairs/src.txt.aligned",
-                    help="Path to the first corpus file.")
+                    default="src.txt.aligned", help="Name of the first corpus file.")
 parser.add_argument("--corpus2", type=str,
-                    default="../data/pp/all-trans-pairs/tgt.txt.aligned",
-                    help="Path to the second corpus file.")
+                    default="tgt.txt.aligned", help="Name of the second corpus file.")
 parser.add_argument("--output_file_name", type=str,
-                    default="../data/pp/all-trans-pairs/clause.align.v5",
-                    help="Path to clause-level alignment output file.")
+                    default="clause.align.v5", help="Name of output file (clause-level alignment).")
 args = parser.parse_args()
-
-
 
 
 def load_word_embedding(pickle_file_name):
@@ -232,28 +227,15 @@ def align_all_corpus(word_vector, corpus1, corpus2, output_file):
 
 
 if __name__ == "__main__":
-    vectors = load_word_embedding(args.embedding_pickle_path)
+    vectors = load_word_embedding(os.path.join(args.data_dir, args.embedding))
     normalize = True
     if normalize:
         # 把所有词向量模长归一化
         norms = np.sqrt(np.sum(vectors.syn0 ** 2, axis=1, keepdims=True))
         vectors.syn0 = vectors.syn0 / norms
     print(vectors.syn0.shape)
-    assert np.allclose(vectors[u"我"], vectors.syn0[6, :])
-    assert np.allclose(np.linalg.norm(vectors[u"我"]), 1.0)
-    print(u"Frequency and word ID of 我", vectors.vocab[u"我"].count, vectors.vocab[u"我"].index)
-
-    sa = u"凡有 产业 的 单身汉 ， 总要 娶 位 太太 ， 这 已经 成 了 一条 举世公认 的 真理 。 "
-    sb = u"有钱 的 单身汉 总要 娶 位 太太 ， 这是 一条 举世公认 的 真理 。"
-    align_sentence_pair(vectors, sa, sb, verbose=True)
-    print("=====================")
-
-    sa = u"“ 哦 ， 亲爱 的 ， 你 应该 知道 ， 朗 太太 说 内瑟 菲尔德 让 英格兰 北部 的 一个 阔少爷 租去 了 ； 说 他 星期一 那天 乘坐 一辆 驷马 马车 来看 房子 ， 看 得 非常 中意 ， 当下 就 和 莫里斯 先生 讲妥 了 ； 说 他 打算 赶在 米 逝勒节 以前 搬进 新居 ， 下 周末 以前 打发 几个 用人 先住 进来 。 ” "
-    sb = u"“ 哦 ， 亲爱 的 ， 你 得 知道 ， 郎格 太太 说 ， 租尼日斐 花园 的 是 个 阔少爷 ， 他 是 英格兰 北部 的 人 ； 听说 他 星期一 那天 ， 乘着 一辆 驷马 大轿车 来看 房子 ， 看 得 非常 中意 ， 当场 就 和 莫理 斯 先生 谈妥 了 ； 他 要 在 ‘ 米迦勒 节 ’ 1 以前 搬进 来 ， 打算 下个 周末 先叫 几个 佣人 来 住 。 ”"
-    align_sentence_pair(vectors, sa, sb, verbose=True)
-    print("=====================")
 
     align_all_corpus(vectors,
-                     args.corpus1,
-                     args.corpus2,
-                     output_file=args.output_file_name)
+                     os.path.join(args.data_dir, args.corpus1),
+                     os.path.join(args.data_dir, args.corpus2),
+                     output_file=os.path.join(args.data_dir, args.output_file_name))
