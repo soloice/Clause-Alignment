@@ -236,4 +236,4 @@ if __name__ == "__main__":
     align_all_corpus(vectors,
                      "../data/pp/all-trans-pairs/src.txt.aligned",
                      "../data/pp/all-trans-pairs/tgt.txt.aligned",
-                     output_file="../data/pp/all-trans-pairs/clause.align.v1")
+                     output_file="../data/pp/all-trans-pairs/clause.align.v5")
