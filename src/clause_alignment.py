@@ -60,7 +60,7 @@ def chinese_sentence_segmentation(sentence):
     return sentences
 
 
-def convert_sentence_to_unicode_string(sent):
+def show_sentence(sent):
     if type(sent) == unicode:
         # A unicode string, e.g.: "我 爱 你 ， 因为 你 独一无二 。"
         # print(sent)
@@ -142,8 +142,8 @@ def align_sentence_pair(word_vector, s1, s2, D=3, verbose=False):
     s1_clauses = chinese_sentence_segmentation(s1)
     s2_clauses = chinese_sentence_segmentation(s2)
 
-    s1c = convert_sentence_to_unicode_string(s1_clauses)
-    s2c = convert_sentence_to_unicode_string(s2_clauses)
+    s1c = show_sentence(s1_clauses)
+    s2c = show_sentence(s2_clauses)
 
 
     l1, l2 = len(s1_clauses), len(s2_clauses)
@@ -228,7 +228,7 @@ def align_all_corpus(word_vector, corpus1, corpus2, output_file):
 
                     cnt += 1
                     if cnt % 100 == 0:
-                        print("Processed " + str(cnt) + " lines.")
+                        print("Processed " + str(cnt) + " lines.\n\n")
 
 
 if __name__ == "__main__":
