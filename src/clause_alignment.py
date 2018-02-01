@@ -5,10 +5,30 @@ import pulp
 import numpy as np
 from gensim.models.keyedvectors import KeyedVectors
 import pickle
+import argparse
 import codecs
 
 
-def load_word_embedding(pickle_file_name="../data/pp/all-trans-pairs/embedding.pkl"):
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--embedding_pickle_path", type=str,
+                    default="../data/pp/all-trans-pairs/embedding.pkl",
+                    help="Path to embedding pickle file.")
+parser.add_argument("--corpus1", type=str,
+                    default="../data/pp/all-trans-pairs/src.txt.aligned",
+                    help="Path to the first corpus file.")
+parser.add_argument("--corpus2", type=str,
+                    default="../data/pp/all-trans-pairs/tgt.txt.aligned",
+                    help="Path to the second corpus file.")
+parser.add_argument("--output_file_name", type=str,
+                    default="../data/pp/all-trans-pairs/clause.align.v5",
+                    help="Path to clause-level alignment output file.")
+args = parser.parse_args()
+
+
+
+
+def load_word_embedding(pickle_file_name):
     with open(pickle_file_name, "rb") as f:
         wv = pickle.load(f)
         # wv is a gensim.models.keyedvectors.EuclideanKeyedVectors
@@ -212,7 +232,7 @@ def align_all_corpus(word_vector, corpus1, corpus2, output_file):
 
 
 if __name__ == "__main__":
-    vectors = load_word_embedding()
+    vectors = load_word_embedding(args.embedding_pickle_path)
     normalize = True
     if normalize:
         # 把所有词向量模长归一化
@@ -234,6 +254,6 @@ if __name__ == "__main__":
     print("=====================")
 
     align_all_corpus(vectors,
-                     "../data/pp/all-trans-pairs/src.txt.aligned",
-                     "../data/pp/all-trans-pairs/tgt.txt.aligned",
-                     output_file="../data/pp/all-trans-pairs/clause.align.v5")
+                     args.corpus1,
+                     args.corpus2,
+                     output_file=args.output_file_name)
