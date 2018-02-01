@@ -5,10 +5,30 @@ import pulp
 import numpy as np
 from gensim.models.keyedvectors import KeyedVectors
 import pickle
+import argparse
 import codecs
 
 
-def load_word_embedding(pickle_file_name="../data/pp/all-trans-pairs/embedding.pkl"):
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--embedding_pickle_path", type=str,
+                    default="../data/pp/all-trans-pairs/embedding.pkl",
+                    help="Path to embedding pickle file.")
+parser.add_argument("--corpus1", type=str,
+                    default="../data/pp/all-trans-pairs/src.txt.aligned",
+                    help="Path to the first corpus file.")
+parser.add_argument("--corpus2", type=str,
+                    default="../data/pp/all-trans-pairs/tgt.txt.aligned",
+                    help="Path to the second corpus file.")
+parser.add_argument("--output_file_name", type=str,
+                    default="../data/pp/all-trans-pairs/clause.align.v5",
+                    help="Path to clause-level alignment output file.")
+args = parser.parse_args()
+
+
+
+
+def load_word_embedding(pickle_file_name):
     with open(pickle_file_name, "rb") as f:
         wv = pickle.load(f)
         # wv is a gensim.models.keyedvectors.EuclideanKeyedVectors
@@ -61,26 +81,46 @@ def convert_sentence_to_unicode_string(sent):
 
 def calculate_score(word_vector, clause1, clause2):
     # clause1 和 clause2 都是 unicode string 组成的 list，即形如 ["我", "爱", "你", "，"]
+    def filter_punctuations(cl):
+        punctuations = [u"。", u"，", u"！", u"？", u"：", u"；", u"“", u"”"]
+        res = []
+        for w in cl:
+            if w not in punctuations:
+                res.append(w)
+        return res
+
+    # print(show_sentence(clause1))
+    # print(show_sentence(clause2))
 
     # 移除掉小句末尾的标点符号
-    clause1, clause2 = clause1[:-1], clause2[:-1]
+    clause1 = filter_punctuations(clause1)
+    clause2 = filter_punctuations(clause2)
+
+    # print(show_sentence(clause1))
+    # print(show_sentence(clause2))
 
     # 计算相似度的方式 I: 所有词算余弦相似度，然后取 top_k 的平均值
 
     similarities = []
     for w1 in clause1:
         for w2 in clause2:
-            # 之后可以考虑利用 TF-IDF 等进行加权
-            similarities.append(np.dot(word_vector[w1], word_vector[w2]))
-            # print(w1, w2, similarities[-1])
-    similarities.sort()
-    similarities = similarities[::-1]
-    top_k = min([5, len(clause1), len(clause2)])
+            sim = np.dot(word_vector[w1], word_vector[w2])
+            set1, set2 = set(w1), set(w2)
+            s = set1 & set2
+            ls, ls1, ls2 = len(s), len(set1), len(set2)
+            if ls > 0:
+                sim = sim + (1-sim) * ls / max(ls1, ls2)
 
-    if len(similarities) > top_k:
-        score = sum(similarities[:top_k]) / (top_k + 1e-4)
+            # print(w1, w2, sim)
+            # 之后可以考虑利用 TF-IDF 等进行加权
+            similarities.append(sim)
+    similarities.sort()
+    top_k = 5
+    k = min(len(clause1), len(clause2))
+    if k > top_k:
+        score = sum(similarities[-top_k:]) / top_k
     else:
-        score = sum(similarities) / (len(similarities) + 1e-4)
+        score = sum(similarities[-k:]) / (k + 1e-4)
 
     # print(" ************************ ")
     # show_sentence(clause1)
@@ -90,7 +130,7 @@ def calculate_score(word_vector, clause1, clause2):
     return score
 
 
-def align_sentence_pair(word_vector, s1, s2, D=2, verbose=False):
+def align_sentence_pair(word_vector, s1, s2, D=3, verbose=False):
     # D: 最大一对多匹配的度数。目前仅支持小句数量少的一方多匹配小句数量多的一方。
     # s1, s2 都是 unicode 字符串，其中中文已分词，各个词用空格隔开
     # print("s1: ", s1)
@@ -134,7 +174,7 @@ def align_sentence_pair(word_vector, s1, s2, D=2, verbose=False):
     raw_objective = [scores[j, k] * matching_vars[j, k] for j in range(l1) for k in range(l2)]
 
     # 惩罚多匹配：只支持 D <= 4
-    penalty_coefficients = [0.0, 0.0, 0.6, 0.7, 0.8]
+    penalty_coefficients = [0.0, 0.0, 0.65, 0.75, 0.85]
     # 惩罚小句少的一方进行多匹配
     penalty_shorter_j, penalty_shorter_k = 0.5 if l1 < l2 else 0.0, 0.5 if l1 > l2 else 0.0
     fertility_penalty_j = [-penalty_coefficients[d] * fertility_j[d, j] + penalty_shorter_j
@@ -159,23 +199,15 @@ def align_sentence_pair(word_vector, s1, s2, D=2, verbose=False):
             for v in matching_vars:
                 print(matching_vars[v].name, matching_vars[v].varValue)
             print(pulp.value(align_problem.objective))
+
         # 提取匹配结果
         result = []
         for j in range(l1):
             for k in range(l2):
-                if matching_vars[j, k].varValue > 0.5: # 即值为 1
+                if matching_vars[j, k].varValue > 0.5:  # 即值为 1
                     result.append(str(j) + "-" + str(k))
 
         result = ", ".join(result)
-
-        # print(result)
-        # input("---------------\n")
-
-        # 下面这种方式输出是乱序的
-        # for v in matching_vars:
-        #     if matching_vars[v].varValue > 0.5: # 即值为 1
-        #         result.append(matching_vars[v].name[len("clause_pairs_"):])
-        # result = " ".join(result)
         return result, s1c, s2c
     else:
         print("Not converged!", pulp.LpStatus[align_problem.status])
@@ -200,7 +232,7 @@ def align_all_corpus(word_vector, corpus1, corpus2, output_file):
 
 
 if __name__ == "__main__":
-    vectors = load_word_embedding()
+    vectors = load_word_embedding(args.embedding_pickle_path)
     normalize = True
     if normalize:
         # 把所有词向量模长归一化
@@ -216,7 +248,12 @@ if __name__ == "__main__":
     align_sentence_pair(vectors, sa, sb, verbose=True)
     print("=====================")
 
+    sa = u"“ 哦 ， 亲爱 的 ， 你 应该 知道 ， 朗 太太 说 内瑟 菲尔德 让 英格兰 北部 的 一个 阔少爷 租去 了 ； 说 他 星期一 那天 乘坐 一辆 驷马 马车 来看 房子 ， 看 得 非常 中意 ， 当下 就 和 莫里斯 先生 讲妥 了 ； 说 他 打算 赶在 米 逝勒节 以前 搬进 新居 ， 下 周末 以前 打发 几个 用人 先住 进来 。 ” "
+    sb = u"“ 哦 ， 亲爱 的 ， 你 得 知道 ， 郎格 太太 说 ， 租尼日斐 花园 的 是 个 阔少爷 ， 他 是 英格兰 北部 的 人 ； 听说 他 星期一 那天 ， 乘着 一辆 驷马 大轿车 来看 房子 ， 看 得 非常 中意 ， 当场 就 和 莫理 斯 先生 谈妥 了 ； 他 要 在 ‘ 米迦勒 节 ’ 1 以前 搬进 来 ， 打算 下个 周末 先叫 几个 佣人 来 住 。 ”"
+    align_sentence_pair(vectors, sa, sb, verbose=True)
+    print("=====================")
+
     align_all_corpus(vectors,
-                     "../data/pp/all-trans-pairs/src.txt.aligned",
-                     "../data/pp/all-trans-pairs/tgt.txt.aligned",
-                     output_file="../data/pp/all-trans-pairs/clause.align.v2")
+                     args.corpus1,
+                     args.corpus2,
+                     output_file=args.output_file_name)

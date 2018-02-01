@@ -3,4 +3,5 @@ papers/
 .idea/
 
 .DS_Store
+*.zip
 
