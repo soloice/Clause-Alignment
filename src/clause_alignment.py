@@ -481,9 +481,9 @@ if __name__ == "__main__":
         vectors.syn0 = vectors.syn0 / norms
     print(vectors.syn0.shape)
 
-    unit_test()
+    # unit_test()
 
-    # align_all_corpus(vectors,
-    #                  os.path.join(args.data_dir, args.corpus1),
-    #                  os.path.join(args.data_dir, args.corpus2),
-    #                  output_file=os.path.join(args.data_dir, args.output_file_name))
+    align_all_corpus(vectors,
+                     os.path.join(args.data_dir, args.corpus1),
+                     os.path.join(args.data_dir, args.corpus2),
+                     output_file=os.path.join(args.data_dir, args.output_file_name))
