@@ -74,6 +74,16 @@ def show_sentence(sent):
         return content
 
 
+def weighting_function(avg_idx):
+    # 该函数单调递增，范围从 0 到 1
+    # avg_idx = 1 -> 返回值（权重）趋于 0
+    # avg_idx = \inf -> 返回值（权重）趋于 1
+    # 事实上，avg_idx = 100 时结果为 0.5，avg_idx > 200 时就几乎为 1 了
+    x = (avg_idx-100.0) / 100.0
+    sigmoid_x = 1. / (1. + np.exp(-x))
+    return sigmoid_x
+
+
 def calculate_score(word_vector, clause1, clause2):
     # clause1 和 clause2 都是 unicode string 组成的 list，即形如 ["我", "爱", "你", "，"]
     def filter_punctuations(cl):
@@ -107,7 +117,6 @@ def calculate_score(word_vector, clause1, clause2):
                     similarities.append((1.0, i, j))
                     identity_match1[i] = True
                     identity_match2[j] = True
-
                 continue
             sim = np.dot(word_vector[w1], word_vector[w2])
             set1, set2 = set(w1), set(w2)
@@ -125,9 +134,29 @@ def calculate_score(word_vector, clause1, clause2):
     top_k = 5
     k = min(len(clause1), len(clause2))
     if k > top_k:
+        # 长句对取 top k 的相似性算平均值
         score = sum(similarity_values[-top_k:]) / top_k
     else:
         score = sum(similarity_values[-k:]) / (k + 1e-4)
+        # 短句取较短句长做归一化
+        # 短句相似性向 0.5 折扣
+        if len(clause1) > len(clause2):
+            clause = clause2
+        elif len(clause1) < len(clause2):
+            clause = clause1
+        else:
+            clause = clause1 + clause2
+        # clause = clause.split()
+        average_index = sum([word_vector.vocab[w].index for w in clause])
+        if score > 0.5:
+            # index -> 1, weight -> 0, score -> 0.5
+            # index -> \inf, weight -> 1, score -> original score
+            weight = weighting_function(average_index)
+            score = 0.5 * (1 - weight) + score * weight
+            # for w in clause:
+            #     print("word index:", w, word_vector.vocab[w].index)
+            # print("\n")
+
 
     # print(" ************************ ")
     # show_sentence(clause1)
@@ -135,6 +164,68 @@ def calculate_score(word_vector, clause1, clause2):
     # print("Similarity = ", similarities)
     # print("Score = ", score)
     return score
+
+
+def construct_and_solve_matching(score_matrix, D, verbose, problem_name="pre-matching"):
+    if verbose:
+        print(score_matrix.shape)
+        print(score_matrix)
+
+    l1, l2 = score_matrix.shape
+    # Variables
+    matching_vars = pulp.LpVariable.dicts("clause_pairs",
+                                          [(j, k) for j in range(l1) for k in range(l2)],
+                                          cat='Binary')
+    fertility_j = pulp.LpVariable.dicts("fertility_j",
+                                        [(d, j) for d in range(2, D + 1) for j in range(l1)],
+                                        cat='Binary')
+
+    fertility_k = pulp.LpVariable.dicts("fertility_k",
+                                        [(d, k) for d in range(2, D + 1) for k in range(l2)],
+                                        cat='Binary')
+
+    # Objective
+    align_problem = pulp.LpProblem(problem_name, pulp.LpMaximize)
+    raw_objective = [score_matrix[j, k] * matching_vars[j, k] for j in range(l1) for k in range(l2)]
+
+    # 惩罚多匹配：只支持 D <= 4
+    penalty_coefficients = [0.0, 0.0, 0.65, 0.75, 0.85]
+    # 惩罚小句少的一方进行多匹配
+    penalty_shorter_j, penalty_shorter_k = 0.5 if l1 < l2 else 0.0, 0.5 if l1 > l2 else 0.0
+    fertility_penalty_j = [-penalty_coefficients[d] * fertility_j[d, j] + penalty_shorter_j
+                           for d in range(2, D + 1) for j in range(l1)]
+    fertility_penalty_k = [-penalty_coefficients[d] * fertility_k[d, k] + penalty_shorter_k
+                           for d in range(2, D + 1) for k in range(l2)]
+    align_problem += pulp.lpSum(raw_objective + fertility_penalty_j + fertility_penalty_k)
+
+    # Constraints
+    for j in range(l1):
+        align_problem += pulp.lpSum([matching_vars[j, k] for k in range(l2)]) \
+                         <= 1 + pulp.lpSum([fertility_j[d, j] for d in range(2, D + 1)])
+
+    for k in range(l2):
+        align_problem += pulp.lpSum([matching_vars[j, k] for j in range(l1)]) \
+                         <= 1 + pulp.lpSum([fertility_k[d, k] for d in range(2, D + 1)])
+
+    align_problem.solve()
+    if pulp.LpStatus[align_problem.status] == "Optimal":
+        if verbose:
+            for v in matching_vars:
+                print(matching_vars[v].name, matching_vars[v].varValue)
+            print(pulp.value(align_problem.objective))
+
+        # 提取匹配结果
+        result = []
+        for j in range(l1):
+            for k in range(l2):
+                if matching_vars[j, k].varValue > 0.5:  # 即值为 1
+                    result.append(str(j) + "-" + str(k))
+
+        result = ", ".join(result)
+        return result
+    else:
+        print("Not converged!", pulp.LpStatus[align_problem.status])
+        return "Matching Error!"
 
 
 def align_sentence_pair(word_vector, s1, s2, D=3, verbose=False):
@@ -161,64 +252,40 @@ def align_sentence_pair(word_vector, s1, s2, D=3, verbose=False):
         for j in range(l2):
             scores[i, j] = calculate_score(word_vector, s1_clauses[i], s2_clauses[j])
 
+    # pre-matching
+    matching_result = construct_and_solve_matching(scores, D, verbose, "pre-matching")
+
     if verbose:
-        print(scores)
+        print("pre-matching result: " + matching_result)
 
-    # Variables
-    matching_vars = pulp.LpVariable.dicts("clause_pairs",
-                                          [(j, k) for j in range(l1) for k in range(l2)],
-                                          cat='Binary')
-    fertility_j = pulp.LpVariable.dicts("fertility_j",
-                                        [(d, j) for d in range(2, D + 1) for j in range(l1)],
-                                        cat='Binary')
+    # refine-matching
+    if matching_result != "Matching Error!":
+        # introduce position bias
+        # matched_pairs 形如 ["0-0", "1-3", "2-2", "3-1"]
+        matched_pairs = matching_result.split(", ")
+        vars1 = [int(pair[:pair.find("-")]) for pair in matched_pairs]
+        vars2 = [int(pair[pair.find("-")+1:]) for pair in matched_pairs]
+        range1 = min(vars1), max(vars1)
+        range2 = min(vars2), max(vars2)
 
-    fertility_k = pulp.LpVariable.dicts("fertility_k",
-                                        [(d, k) for d in range(2, D + 1) for k in range(l2)],
-                                        cat='Binary')
+        # similar to Gaussian kernel
+        # extra bonus to diagonal var pairs
+        bonus = 0.05
+        for i in range(l1):
+            for j in range(l2):
+                dist_to_diagonal = abs((i - range1[0]) * (range2[1] - range2[0]) - (range1[1] - range1[0]) * (j - range2[0]))
+                print("dist: ", i, j, dist_to_diagonal)
+                # if (i - range1[0]) / (range1[1] - range1[0]) $\approx$ (j - range2[0]) / (range2[1] - range2[0]):
+                scores[i, j] += bonus * np.exp(-dist_to_diagonal)
+                if scores[i, j] > 1.0:
+                    scores[i, j] = 1.0
 
-    # Objective
-    align_problem = pulp.LpProblem("matching", pulp.LpMaximize)
-    raw_objective = [scores[j, k] * matching_vars[j, k] for j in range(l1) for k in range(l2)]
+        matching_result = construct_and_solve_matching(scores, D, verbose, "refine-matching")
 
-    # 惩罚多匹配：只支持 D <= 4
-    penalty_coefficients = [0.0, 0.0, 0.65, 0.75, 0.85]
-    # 惩罚小句少的一方进行多匹配
-    penalty_shorter_j, penalty_shorter_k = 0.5 if l1 < l2 else 0.0, 0.5 if l1 > l2 else 0.0
-    fertility_penalty_j = [-penalty_coefficients[d] * fertility_j[d, j] + penalty_shorter_j
-                           for d in range(2, D + 1) for j in range(l1)]
-    fertility_penalty_k = [-penalty_coefficients[d] * fertility_k[d, k] + penalty_shorter_k
-                           for d in range(2, D + 1) for k in range(l2)]
-    align_problem += pulp.lpSum(raw_objective + fertility_penalty_j + fertility_penalty_k)
-
-    # Constraints
-    for j in range(l1):
-        align_problem += pulp.lpSum([matching_vars[j, k] for k in range(l2)]) \
-                         <= 1 + pulp.lpSum([fertility_j[d, j] for d in range(2, D + 1)])
-
-    for k in range(l2):
-        align_problem += pulp.lpSum([matching_vars[j, k] for j in range(l1)]) \
-                         <= 1 + pulp.lpSum([fertility_k[d, k] for d in range(2, D + 1)])
-
-
-    align_problem.solve()
-    if pulp.LpStatus[align_problem.status] == "Optimal":
-        if verbose:
-            for v in matching_vars:
-                print(matching_vars[v].name, matching_vars[v].varValue)
-            print(pulp.value(align_problem.objective))
-
-        # 提取匹配结果
-        result = []
-        for j in range(l1):
-            for k in range(l2):
-                if matching_vars[j, k].varValue > 0.5:  # 即值为 1
-                    result.append(str(j) + "-" + str(k))
-
-        result = ", ".join(result)
-        return result, s1c, s2c
+    if matching_result != "Matching Error!":
+        return matching_result, s1c, s2c
     else:
-        print("Not converged!", pulp.LpStatus[align_problem.status])
-        return "Matching Error!", "", ""
+        return matching_result, "", ""
 
 
 def align_all_corpus(word_vector, corpus1, corpus2, output_file):
@@ -247,26 +314,98 @@ if __name__ == "__main__":
         vectors.syn0 = vectors.syn0 / norms
     print(vectors.syn0.shape)
 
-    sent1 = u"里德 太太 对此 则 完全 装聋作哑 ， 她 从 来看 不见 他 打 我 ， 也 从来 听不见 他 骂 我 ， 虽然 他 经常 当着 她 的 面 打 我 骂 我 。"
-    sent2 = u"里德 太太 呢 ， 在 这种 事情 上 ， 总是 装聋作哑 ， 她 从 来看 不见 他 打 我 ， 也 从来 听不见 他 骂 我 ， 虽然 他 常常 当着 她 的 面 既 打 我 又 骂 我 。"
+
+    # sent1 = u"里德 太太 对此 则 完全 装聋作哑 ， 她 从 来看 不见 他 打 我 ， 也 从来 听不见 他 骂 我 ， 虽然 他 经常 当着 她 的 面 打 我 骂 我 。"
+    # sent2 = u"里德 太太 呢 ， 在 这种 事情 上 ， 总是 装聋作哑 ， 她 从 来看 不见 他 打 我 ， 也 从来 听不见 他 骂 我 ， 虽然 他 常常 当着 她 的 面 既 打 我 又 骂 我 。"
+    # print("=" * 100)
+    # matching_result, s1_clauses, s2_clauses = align_sentence_pair(vectors, sent1, sent2, verbose=True)
+    # print("refined result: " + matching_result)
+    #
+    # sent1 = u"“ 你 这个 狠毒 的 坏孩子 ！ ” 我 说 ， “ 你 简直 像 个 杀人犯 … … 你 是 个 管 奴隶 的 监工 … … 你 像 那班 罗马 暴君 ！ ” 我 看过 哥 尔德 斯密斯 的 《 罗马 史 》 ， 对尼禄 和 卡利 古拉 一类 人 ， 已经 有 我 自己 的 看法 。 我 曾 在 心里 暗暗 拿 约翰 和 他们 作 过 比较 ， 可是 从 没想到 会 这样 大声 地说 出来 。"
+    # sent2 = u"“ 你 这 男孩 真是 又 恶毒 又 残酷 ！ ” 我 说 。 “ 你 像 个 杀人犯 — — 你 像 个 虐待 奴隶 的 人 — — 你 像 罗马 的 皇帝 ！ ” 我 看过 哥尔 斯密 的 《 罗马 史 》 ， 对尼禄 和 卡里 古拉 等等 ， 已经 有 我 自己 的 看法 。 我 也 默默地 作 过 比较 ， 却 从 没想到 会 大声 地说 出来 。"
+    # print("=" * 100)
+    # matching_result, s1_clauses, s2_clauses = align_sentence_pair(vectors, sent1, sent2, verbose=True)
+    # print("refined result: " + matching_result)
+    #
+    # sent1 = u"事实上 ， 我 确实 有点 失常 ， 或者 像 法国人 常说 的 那样 ， 有点儿 不能自制 了 。"
+    # sent2 = u"事实上 ， 我 有点儿 失常 ， 或者 像 法国人 所说 的 ， 有点儿 超出 我 自己 的 常规 。"
+    # print("=" * 100)
+    # matching_result, s1_clauses, s2_clauses = align_sentence_pair(vectors, sent1, sent2, verbose=True)
+    # print("refined result: " + matching_result)
+    #
+    # sent1 = u"“ 真 不 害臊 ！ 真 不 害臊 ！ ” 使女 嚷嚷 道 ， “ 多 吓人 的 举动 哪 ， 爱 小姐 ， 居然 动手 打 一位 年轻 绅士 ， 打起 你 恩人 的 儿子 ， 你 的 小 主人 来 了 ！ ”"
+    # sent2 = u"“ 真 不要脸 ！ 真 不要脸 ！ ” 那 使女 说 。 “ 多 吓人 的 举动 ， 爱 小姐 ， 居然 打 起 年轻 的 绅士 ， 打起 你 恩人 的 儿子 来 了 ！ 居然 打 你 的 小 主人 。 ”"
+    # print("=" * 100)
+    # matching_result, s1_clauses, s2_clauses = align_sentence_pair(vectors, sent1, sent2, verbose=True)
+    # print("refined result: " + matching_result)
+    #
+    # sent1 = u"“ 请 爱 小姐 坐下 吧 ， ” 他 说 。 在 他 那 勉强 而 生硬 的 点头 和 不耐烦 但 还 合乎 礼节 的 口气 中 ， 似乎 还 表达 了 另 一层 意思 ： “ 见鬼 ， 爱 小姐 来 没来 跟 我 有 什么 关系 ？ 这会儿 我 才 不 愿意 搭理 她 哩 。 ”"
+    # sent2 = u"“ 让 爱 小姐 坐下 吧 ， ” 他 说 。 那 勉强 的 不 自然 的 点头 和 不耐烦 然而 正式 的 语调 中 ， 似乎 有点 什么 东西 要 进一步 表示 ： “ 见鬼 ， 爱 小姐 在 不 在 这儿 ， 和 我 有 什么 关系 ？ 现在 我 可不 愿 招呼 她 。 ”"
+    # print("=" * 100)
+    # matching_result, s1_clauses, s2_clauses = align_sentence_pair(vectors, sent1, sent2, verbose=True)
+    # print("refined result: " + matching_result)
+    #
+    # sent1 = u"“ 是 这样 ， ” 那位 好心 的 太太 接应 说 ， 她 现在 明白 我们 在 说 什么 了 ， “ 是 上帝 指引 我 作出 了 这样 的 选择 ， 为 这 我 每天 都 在 感谢 他 。 爱 小姐 是 我 十分 难得 的 伙伴 ， 她 也 是 阿黛尔 和善 细心 的 老师 。 ”"
+    # sent2 = u"“ 是 的 ， ” 这位 善良 的 妇人 说 ， 她 现在 知道 我们 在 谈 什么 了 ， “ 上帝 引导 我作 了 这个 选择 ， 我 天天 都 在 感谢 。 爱 小姐 对 我 来说 ， 是 个 非常 可贵 的 伴侣 ， 对 阿黛勒 来说 ， 是 个 既 和蔼 又 细心 的 老师 。 ”"
+    # print("=" * 100)
+    # matching_result, s1_clauses, s2_clauses = align_sentence_pair(vectors, sent1, sent2, verbose=True)
+    # print("refined result: " + matching_result)
+    #
+    # # 这个感觉没办法……
+    # sent1 = u"“ 先生 ？ ” 费尔法克斯 太太 说 。 “ 我 扭伤 了 脚 也 得 感谢 她 哩 。 ”"
+    # sent2 = u"“ 是 吗 ？ ” 菲尔 费 克斯 太太 说 。 “ 我 这次 扭伤 了 筋 ， 还 得 谢谢 她 呢 。 ”"
+    # print("=" * 100)
+    # matching_result, s1_clauses, s2_clauses = align_sentence_pair(vectors, sent1, sent2, verbose=True)
+    # print("refined result: " + matching_result)
+    #
+    #
+    # sent1 = u"“ 因为 是 在 假期 ， 我 没有 别的 事要 做 ， 所以 我 坐在 那儿 从 早上 一直 画到 中午 ， 从 中午 一直 画到 晚上 。 仲夏 的 白天 很长 ， 能 让 我 专心致志 地 工作 。 ”"
+    # sent2 = u"“ 我 没有 别的 事 可 做 ， 因为 那 时候 是 假期 ， 我 就 坐 着 从 早上 画到 中午 ， 又 从 中午 画到 晚上 ， 仲夏 白天 很长 ， 对 我 要 埋头工作 的 心情 是 有利 的 。 ”"
+    # print("=" * 100)
+    # matching_result, s1_clauses, s2_clauses = align_sentence_pair(vectors, sent1, sent2, verbose=True)
+    # print("refined result: " + matching_result)
+    #
+    # sent1 = u"“ 都 九点 了 。 你 是 怎么 搞 的 ， 爱 小姐 ， 让 阿黛尔 坐 得 这么久 ？ 快带 她 去 睡觉 。 ”"
+    # sent2 = u"“ 九点 了 ， 爱 小姐 ， 你 让 阿黛勒 坐 这么久 ， 究竟 是 干什么 ？ 带 她 去 睡觉 。 ”"
+    # print("=" * 100)
+    # matching_result, s1_clauses, s2_clauses = align_sentence_pair(vectors, sent1, sent2, verbose=True)
+    # print("refined result: " + matching_result)
+    #
+    # sent1 = u"“ 啊 ！ 我 敢肯定 ！ 你 这人 有点儿 特别 ！ ” 他 说 ， “ 你 的 样子 就 像 个 ‘ 小 修女 ’ 似的 ， 古怪 、 安静 、 严肃 而 又 单纯 。 你 坐在 那儿 ， 两手 放在 身前 ， 眼睛 老是 盯 着 地毯 （ 顺便 说 一句 ， 除了 有时 一个劲儿 盯 着 我 的 脸 ， 比如说 就 像 刚才 那样 ） 。"
+    # sent2 = u"“ 啊 ！ 我 敢肯定 ！ 你 这人 有点 特别 ， ” 他 说 ， “ 你 的 样子 就 像 个 nonnette 。 你 坐在 那里 ， 两只手 放在 前面 ， 眼睛 老是 盯 着 地毯 （ 顺便 提 一下 ， 除了 尖利 地 盯 着 我 的 脸 ， 譬如说 就 像 刚才 那样 ） ， 你 显得 古怪 、 安静 、 庄严 和 单纯 。"
+    # print("=" * 100)
+    # matching_result, s1_clauses, s2_clauses = align_sentence_pair(vectors, sent1, sent2, verbose=True)
+    # print("refined result: " + matching_result)
+    #
+    # sent1 = u"“ 我 相信 ， 先生 ， 我 决不会 把 不拘礼节 错 当成 傲慢无礼 的 。 前 一种 我 反倒 喜欢 ， 而后 一种 ， 没有 哪个 生来 自由 的 人肯 低头 忍受 的 ， 哪怕 是 看 在 薪水 的 分上 。 ”"
+    # sent2 = u"“ 我 肯定 ， 先生 ， 我 决不会 把 不拘礼节 错 认为 蛮横无理 ； 前者 我 是 相当 喜欢 的 ， 后者 ， 却是 任何 一个 自由民 都 不愿 忍受 的 ， 哪怕 是 拿 了 薪俸 ， 也 不愿 忍受 。 ”"
+    # print("=" * 100)
+    # matching_result, s1_clauses, s2_clauses = align_sentence_pair(vectors, sent1, sent2, verbose=True)
+    # print("refined result: " + matching_result)
+
+    sent1 = u"可是 ， 我 的 春天 已经 逝去 了 ， 而 把 一朵 法国 小花 留在 了 我 的 手上 。"
+    sent2 = u"不管 怎么样 ， 我 的 春天 已经 过去 了 ， 可是 ， 却 把 那朵 法国 小花 留在 我 手上 。"
     print("=" * 100)
     matching_result, s1_clauses, s2_clauses = align_sentence_pair(vectors, sent1, sent2, verbose=True)
-    print(matching_result)
+    print("refined result: " + matching_result)
 
-
-
-    sent1 = u"“ 你 这个 狠毒 的 坏孩子 ！ ” 我 说 ， “ 你 简直 像 个 杀人犯 … … 你 是 个 管 奴隶 的 监工 … … 你 像 那班 罗马 暴君 ！ ” 我 看过 哥 尔德 斯密斯 的 《 罗马 史 》 ， 对尼禄 和 卡利 古拉 一类 人 ， 已经 有 我 自己 的 看法 。 我 曾 在 心里 暗暗 拿 约翰 和 他们 作 过 比较 ， 可是 从 没想到 会 这样 大声 地说 出来 。"
-    sent2 = u"“ 你 这 男孩 真是 又 恶毒 又 残酷 ！ ” 我 说 。 “ 你 像 个 杀人犯 — — 你 像 个 虐待 奴隶 的 人 — — 你 像 罗马 的 皇帝 ！ ” 我 看过 哥尔 斯密 的 《 罗马 史 》 ， 对尼禄 和 卡里 古拉 等等 ， 已经 有 我 自己 的 看法 。 我 也 默默地 作 过 比较 ， 却 从 没想到 会 大声 地说 出来 。"
+    sent1 = u"费尔法克斯 太太 在 大厅 里 和 仆人 说话 的 声音 惊醒 了 你 ， 当时 你 多么 奇怪 地 脸露 微笑 ， 而且 在 笑 你 自己 ， 简妮特 ！ 你 的 微笑 意味深长 ， 非常 尖刻 ， 似乎 在 讥笑 你 自己 的 想入非非 。"
+    sent2 = u"菲尔 费 克斯 太太 在 大厅 里 跟 用人 说话 的 声音 把 你 惊醒 ； 你 多么 奇怪 地 对 自己 微笑 ， 而且 笑 你 自己 啊 ， 简 ！ 你 的 微笑 ， 很 有意思 ； 笑 得 很 机灵 ， 似乎 在 嘲笑 你 自己 想 得出 神 。"
     print("=" * 100)
     matching_result, s1_clauses, s2_clauses = align_sentence_pair(vectors, sent1, sent2, verbose=True)
-    print(matching_result)
+    print("refined result: " + matching_result)
 
-    sent1 = u"事实上 ， 我 确实 有点 失常 ， 或者 像 法国人 常说 的 那样 ， 有点儿 不能自制 了 。"
-    sent2 = u"事实上 ， 我 有点儿 失常 ， 或者 像 法国人 所说 的 ， 有点儿 超出 我 自己 的 常规 。"
+    sent1 = u"“ 你 不 把 一切 都 告诉 我 ， 你 就 肯定 走 不了 ！ ” 我 说 。 “ 我 不太想 现在 就 说 。 ”"
+    sent2 = u"“ 你 不 把 一切 都 告诉 我 ， 你 肯定 就 不能 走 ！ ” 我 说 。 “ 现在 我 倒 不想 说 。 ”"
     print("=" * 100)
     matching_result, s1_clauses, s2_clauses = align_sentence_pair(vectors, sent1, sent2, verbose=True)
-    print(matching_result)
+    print("refined result: " + matching_result)
 
+    sent1 = u"他 愿意 把 它 留给 谁 就 留给 谁 ， 现在 他 把 它 留给 了 你 ， 总之 ， 你 拥有 它 是 完全 正当合理 的 ， 你 可以 问心无愧 地 认为 它 完全 属于 你 。 ”"
+    sent2 = u"公正 毕竟 还是 允许 你 保留 它 的 ； 你 可以 问心无愧 地 认为 它 完全 属于 你 。 ”"
+    print("=" * 100)
+    matching_result, s1_clauses, s2_clauses = align_sentence_pair(vectors, sent1, sent2, verbose=True)
+    print("refined result: " + matching_result)
     # align_all_corpus(vectors,
     #                  os.path.join(args.data_dir, args.corpus1),
     #                  os.path.join(args.data_dir, args.corpus2),
