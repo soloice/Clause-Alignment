@@ -7,7 +7,7 @@ import pickle
 import os
 import argparse
 import codecs
-
+import scipy.stats
 
 
 parser = argparse.ArgumentParser()
@@ -27,10 +27,10 @@ def load_word_embedding(pickle_file_name):
     with open(pickle_file_name, "rb") as f:
         wv = pickle.load(f)
         # wv is a gensim.models.keyedvectors.EuclideanKeyedVectors
-        print(type(wv))
+        # print(type(wv))
 
         # wv.vocab is a Python dict
-        print(type(wv.vocab))
+        # print(type(wv.vocab))
         # print(wv.vocab)
 
         # wv.index2word is a list of words
@@ -131,13 +131,18 @@ def calculate_score(word_vector, clause1, clause2):
     similarities.sort()
     print(similarities)
     similarity_values = [sim for sim, _1, _2 in similarities]
+
     top_k = 5
     k = min(len(clause1), len(clause2))
     if k > top_k:
         # 长句对取 top k 的相似性算平均值
         score = sum(similarity_values[-top_k:]) / top_k
+        similarity_is = [i for _0, i, _2 in similarities[-top_k:]]
+        similarity_js = [j for _0, _1, j in similarities[-top_k:]]
     else:
         score = sum(similarity_values[-k:]) / (k + 1e-4)
+        similarity_is = [i for _0, i, _2 in similarities[-k:]]
+        similarity_js = [j for _0, _1, j in similarities[-k:]]
         # 短句取较短句长做归一化
         # 短句相似性向 0.5 折扣
         if len(clause1) > len(clause2):
@@ -156,6 +161,26 @@ def calculate_score(word_vector, clause1, clause2):
             # for w in clause:
             #     print("word index:", w, word_vector.vocab[w].index)
             # print("\n")
+
+    # if k >= 1:
+    #     # This should always happen
+    #     # print(similarity_is)
+    #     # print(similarity_js)
+    #     if (max(similarity_is) == min(similarity_is)) or (max(similarity_js) == min(similarity_js)):
+    #         # 额外处理退化情形（所有 top k 或 k 都对应到了一个词上）
+    #         rank_correlation = 0.0
+    #     else:
+    #         rank_correlation = scipy.stats.spearmanr(similarity_is, similarity_js)[0]
+    #
+    #     # rank_correlation 的范围是 [-1, 1]
+    #     print("Spearman's rho: ", rank_correlation)
+    #
+    #     # 如果 rank_correlation = 1，匹配分数不做折扣；
+    #     # 如果 rank_correlation = 1，匹配分数折扣 0.9 倍；
+    #     # 如果 rank_correlation = -1，匹配分数折扣 0.82 倍；
+    #     temperature = 10.0
+    #     ordering_weight = np.exp((rank_correlation - 1) / temperature)
+    #     score = score * ordering_weight
 
 
     # print(" ************************ ")
