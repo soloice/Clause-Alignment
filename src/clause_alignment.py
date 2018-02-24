@@ -152,7 +152,7 @@ def calculate_score(word_vector, clause1, clause2):
         else:
             clause = clause1 + clause2
         # clause = clause.split()
-        average_index = sum([word_vector.vocab[w].index for w in clause]) / len(clause)
+        average_index = sum([word_vector.vocab[w].index for w in clause]) / (len(clause) + 1e-4)
         if score > 0.5:
             # index -> 1, weight -> 0, score -> 0.5
             # index -> \inf, weight -> 1, score -> original score
