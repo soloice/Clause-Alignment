@@ -34,7 +34,7 @@ def load_word_embedding(pickle_file_name):
         # print(wv.vocab)
 
         # wv.index2word is a list of words
-        print("/".join(wv.index2word))
+        # print("/".join(wv.index2word))
         return wv
 
 
@@ -97,8 +97,18 @@ def calculate_score(word_vector, clause1, clause2):
     # 计算相似度的方式 I: 所有词算余弦相似度，然后取 top_k 的平均值
 
     similarities = []
-    for w1 in clause1:
-        for w2 in clause2:
+    identity_match1 = [False] * len(clause1)
+    identity_match2 = [False] * len(clause2)
+    for i, w1 in enumerate(clause1):
+        for j, w2 in enumerate(clause2):
+            if w1 == w2:
+                # 全同词对只记录第一次配对
+                if not identity_match1[i] and not identity_match2[j]:
+                    similarities.append((1.0, i, j))
+                    identity_match1[i] = True
+                    identity_match2[j] = True
+
+                continue
             sim = np.dot(word_vector[w1], word_vector[w2])
             set1, set2 = set(w1), set(w2)
             s = set1 & set2
@@ -108,14 +118,16 @@ def calculate_score(word_vector, clause1, clause2):
 
             # print(w1, w2, sim)
             # 之后可以考虑利用 TF-IDF 等进行加权
-            similarities.append(sim)
+            similarities.append((sim, i, j))
     similarities.sort()
+    print(similarities)
+    similarity_values = [sim for sim, _1, _2 in similarities]
     top_k = 5
     k = min(len(clause1), len(clause2))
     if k > top_k:
-        score = sum(similarities[-top_k:]) / top_k
+        score = sum(similarity_values[-top_k:]) / top_k
     else:
-        score = sum(similarities[-k:]) / (k + 1e-4)
+        score = sum(similarity_values[-k:]) / (k + 1e-4)
 
     # print(" ************************ ")
     # show_sentence(clause1)
@@ -235,7 +247,27 @@ if __name__ == "__main__":
         vectors.syn0 = vectors.syn0 / norms
     print(vectors.syn0.shape)
 
-    align_all_corpus(vectors,
-                     os.path.join(args.data_dir, args.corpus1),
-                     os.path.join(args.data_dir, args.corpus2),
-                     output_file=os.path.join(args.data_dir, args.output_file_name))
+    sent1 = u"里德 太太 对此 则 完全 装聋作哑 ， 她 从 来看 不见 他 打 我 ， 也 从来 听不见 他 骂 我 ， 虽然 他 经常 当着 她 的 面 打 我 骂 我 。"
+    sent2 = u"里德 太太 呢 ， 在 这种 事情 上 ， 总是 装聋作哑 ， 她 从 来看 不见 他 打 我 ， 也 从来 听不见 他 骂 我 ， 虽然 他 常常 当着 她 的 面 既 打 我 又 骂 我 。"
+    print("=" * 100)
+    matching_result, s1_clauses, s2_clauses = align_sentence_pair(vectors, sent1, sent2, verbose=True)
+    print(matching_result)
+
+
+
+    sent1 = u"“ 你 这个 狠毒 的 坏孩子 ！ ” 我 说 ， “ 你 简直 像 个 杀人犯 … … 你 是 个 管 奴隶 的 监工 … … 你 像 那班 罗马 暴君 ！ ” 我 看过 哥 尔德 斯密斯 的 《 罗马 史 》 ， 对尼禄 和 卡利 古拉 一类 人 ， 已经 有 我 自己 的 看法 。 我 曾 在 心里 暗暗 拿 约翰 和 他们 作 过 比较 ， 可是 从 没想到 会 这样 大声 地说 出来 。"
+    sent2 = u"“ 你 这 男孩 真是 又 恶毒 又 残酷 ！ ” 我 说 。 “ 你 像 个 杀人犯 — — 你 像 个 虐待 奴隶 的 人 — — 你 像 罗马 的 皇帝 ！ ” 我 看过 哥尔 斯密 的 《 罗马 史 》 ， 对尼禄 和 卡里 古拉 等等 ， 已经 有 我 自己 的 看法 。 我 也 默默地 作 过 比较 ， 却 从 没想到 会 大声 地说 出来 。"
+    print("=" * 100)
+    matching_result, s1_clauses, s2_clauses = align_sentence_pair(vectors, sent1, sent2, verbose=True)
+    print(matching_result)
+
+    sent1 = u"事实上 ， 我 确实 有点 失常 ， 或者 像 法国人 常说 的 那样 ， 有点儿 不能自制 了 。"
+    sent2 = u"事实上 ， 我 有点儿 失常 ， 或者 像 法国人 所说 的 ， 有点儿 超出 我 自己 的 常规 。"
+    print("=" * 100)
+    matching_result, s1_clauses, s2_clauses = align_sentence_pair(vectors, sent1, sent2, verbose=True)
+    print(matching_result)
+
+    # align_all_corpus(vectors,
+    #                  os.path.join(args.data_dir, args.corpus1),
+    #                  os.path.join(args.data_dir, args.corpus2),
+    #                  output_file=os.path.join(args.data_dir, args.output_file_name))
