@@ -42,6 +42,9 @@ def pretrain_word_embeddings_and_dump_vocabulary(dir,
         with codecs.open(os.path.join(dir, name), "r", encoding="utf-8") as f:
             for line in f:
                 tokens = line.split()
+                if len(tokens) < 2:
+                    # 过滤空行和只有一个单词的行
+                    continue
                 if append_eos:
                     tokens.append(eos_symbol)
                 corpus.append(tokens)

@@ -20,6 +20,8 @@ parser.add_argument("--corpus2", type=str,
                     default="tgt.txt.aligned", help="Name of the second corpus file.")
 parser.add_argument("--output_file_name", type=str,
                     default="clause.align.v5", help="Name of output file (clause-level alignment).")
+parser.add_argument("--version", type=str,
+                    default="v1", help="Corpus format version. 'v1' or 'v2'. See L340~341.")
 args = parser.parse_args()
 
 
@@ -333,21 +335,51 @@ def align_sentence_pair(word_vector, s1, s2, D=3, verbose=False):
         return matching_result, "", ""
 
 
-def align_all_corpus(word_vector, corpus1, corpus2, output_file):
-    # output_file 保存了小句之间对齐的结果
-    cnt = 0
-    with codecs.open(corpus1, "r", encoding="utf-8") as f1:
-        with codecs.open(corpus2, "r", encoding="utf-8") as f2:
-            with codecs.open(output_file, "w", encoding="utf-8") as f3:
-                for s1, s2 in zip(f1, f2):
-                    matching_result, s1_clauses, s2_clauses = align_sentence_pair(word_vector, s1.strip(), s2.strip())
-                    f3.write(s1_clauses + "\n")
-                    f3.write(s2_clauses + "\n")
-                    f3.write(matching_result + "\n\n")
+def align_all_corpus(word_vector, corpus1, corpus2, output_file, corpus_format="v1"):
+    # corpus_format 允许两种格式：
+    #   v1 是 corpus1 和 corpus2 各代表一个版本，每行一句语料，互相平行对齐
+    #   v2 是 corpus1 自身就是句对齐的语料，每五行一组，分别是：句子 1 元信息，句子 1， 句子 2 元信息，句子 2，空行。corpus2 为空。
+    #  output_file 保存了小句之间对齐的结果
+    if corpus_format == "v1":
+        cnt = 0
+        with codecs.open(corpus1, "r", encoding="utf-8") as f1:
+            with codecs.open(corpus2, "r", encoding="utf-8") as f2:
+                with codecs.open(output_file, "w", encoding="utf-8") as f3:
+                    for s1, s2 in zip(f1, f2):
+                        matching_result, s1_clauses, s2_clauses = align_sentence_pair(word_vector, s1.strip(), s2.strip())
+                        f3.write(s1_clauses + "\n")
+                        f3.write(s2_clauses + "\n")
+                        f3.write(matching_result + "\n\n")
 
-                    cnt += 1
-                    if cnt % 100 == 0:
-                        print("Processed " + str(cnt) + " lines.\n\n")
+                        cnt += 1
+                        if cnt % 100 == 0:
+                            print("Processed " + str(cnt) + " lines.\n\n")
+    else:
+        meta1, s1, meta2, s2 = "", "", "", ""
+        with codecs.open(corpus1, "r", encoding="utf-8") as f:
+                with codecs.open(output_file, "w", encoding="utf-8") as f3:
+                    for cnt, line in enumerate(f):
+                        # print(cnt, line)
+                        position = cnt % 5
+                        if position == 0:
+                            meta1 = line.strip()
+                        elif position == 1:
+                            s1 = line.strip()
+                        elif position == 2:
+                            meta2 = line.strip()
+                        elif position == 3:
+                            s2 = line.strip()
+                        else:
+                            assert position == 4
+                            matching_result, s1_clauses, s2_clauses = align_sentence_pair(word_vector, s1, s2)
+                            f3.write(meta1 + meta2 + "\n")
+                            f3.write(s1_clauses + "\n")
+                            f3.write(s2_clauses + "\n")
+                            f3.write(matching_result + "\n\n")
+
+                            cnt += 1
+                            if cnt % 500 == 0:
+                                print("Processed " + str(cnt) + " lines.\n\n")
 
 
 def unit_test():
@@ -486,4 +518,5 @@ if __name__ == "__main__":
     align_all_corpus(vectors,
                      os.path.join(args.data_dir, args.corpus1),
                      os.path.join(args.data_dir, args.corpus2),
-                     output_file=os.path.join(args.data_dir, args.output_file_name))
+                     output_file=os.path.join(args.data_dir, args.output_file_name),
+                     corpus_format=args.version)
