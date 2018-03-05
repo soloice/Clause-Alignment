@@ -382,7 +382,7 @@ def align_all_corpus(word_vector, corpus1, corpus2, output_file, corpus_format="
                         else:
                             assert position == 4
                             matching_result, s1_clauses, s2_clauses = align_sentence_pair(word_vector, s1, s2)
-                            f3.write(meta1 + meta2 + "\n")
+                            f3.write(meta1 + "-" + meta2 + "\n")
                             f3.write(s1_clauses + "\n")
                             f3.write(s2_clauses + "\n")
                             f3.write(matching_result + "\n\n")
