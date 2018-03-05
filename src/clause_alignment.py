@@ -24,6 +24,9 @@ parser.add_argument("--version", type=str,
                     default="v1", help="Corpus format version. 'v1' or 'v2'. See L340~341.")
 args = parser.parse_args()
 
+ALWAYS_CHOOSE = 2.5
+
+
 
 def load_word_embedding(pickle_file_name):
     with open(pickle_file_name, "rb") as f:
@@ -76,14 +79,15 @@ def show_sentence(sent):
         return content
 
 
-def weighting_function(avg_idx):
+def weighting_function(avg_idx, length):
     # 该函数单调递增，范围从 0 到 1
-    # avg_idx = 1 -> 返回值（权重）趋于 0
-    # avg_idx = \inf -> 返回值（权重）趋于 1
-    # 事实上，avg_idx = 100 时结果为 0.5，avg_idx > 200 时就几乎为 1 了
+    # avg_idx = 1, length -> 0 -> 返回值（权重）趋于 0
+    # avg_idx = \inf, length -> \inf -> 返回值（权重）趋于 1
+    # 事实上，avg_idx = 100 时词频权重为 0.5，avg_idx > 200 时就几乎为 1 了
     x = (avg_idx-100.0) / 100.0
     sigmoid_x = 1. / (1. + np.exp(-x))
-    return sigmoid_x
+    length_penalty = 1. / (1. + np.exp(-length / 2.0))
+    return length_penalty * sigmoid_x
 
 
 def calculate_score(word_vector, clause1, clause2):
@@ -141,28 +145,30 @@ def calculate_score(word_vector, clause1, clause2):
         score = sum(similarity_values[-top_k:]) / top_k
         similarity_is = [i for _0, i, _2 in similarities[-top_k:]]
         similarity_js = [j for _0, _1, j in similarities[-top_k:]]
+        threshold = 0.95
+        # 此处允许得分超过 1：设置为 ALWAYS_CHOOSE，防止被 fertility penalty 干掉。长句对齐如果得分很高，那么这些结果比如
+        if score > threshold:
+            score = ALWAYS_CHOOSE
     else:
         score = sum(similarity_values[-k:]) / (k + 1e-4)
         similarity_is = [i for _0, i, _2 in similarities[-k:]]
         similarity_js = [j for _0, _1, j in similarities[-k:]]
         # 短句取较短句长做归一化
-        # 短句相似性向 0.5 折扣
+        # 短句相似性向 0 折扣
         if len(clause1) > len(clause2):
             clause = clause2
-        elif len(clause1) < len(clause2):
-            clause = clause1
         else:
-            clause = clause1 + clause2
+            clause = clause1
         # clause = clause.split()
         average_index = sum([word_vector.vocab[w].index for w in clause]) / (len(clause) + 1e-4)
-        if score > 0.5:
-            # index -> 1, weight -> 0, score -> 0.5
-            # index -> \inf, weight -> 1, score -> original score
-            weight = weighting_function(average_index)
-            score = 0.5 * (1 - weight) + score * weight
-            # for w in clause:
-            #     print("word index:", w, word_vector.vocab[w].index)
-            # print("\n")
+
+        # index -> 1 (frequent words), len(clause) -> 0 (short sentence), weight -> 0.0, score -> 0.0
+        # index -> \inf (rare words, len(clause) -> 5 (relatively long sentence), weight -> 1, score -> original score
+        weight = weighting_function(average_index, len(clause))
+        score = score * weight
+        # for w in clause:
+        #     print("word index:", w, word_vector.vocab[w].index)
+        # print("\n")
 
     # if k >= 1:
     #     # This should always happen
@@ -216,7 +222,7 @@ def construct_and_solve_matching(score_matrix, D, verbose, problem_name="pre-mat
     raw_objective = [score_matrix[j, k] * matching_vars[j, k] for j in range(l1) for k in range(l2)]
 
     # 惩罚多匹配：只支持 D <= 4
-    penalty_coefficients = [0.0, 0.0, 0.65, 0.75, 0.85]
+    penalty_coefficients = [0.0, 0.4, 0.65, 0.75, 0.85]
     # 惩罚小句少的一方进行多匹配
     penalty_shorter_j, penalty_shorter_k = 0.5 if l1 < l2 else 0.0, 0.5 if l1 > l2 else 0.0
     fertility_penalty_j = [-penalty_coefficients[d] * fertility_j[d, j] + penalty_shorter_j
@@ -306,6 +312,8 @@ def align_sentence_pair(word_vector, s1, s2, D=3, verbose=False):
         bonus = 0.05
         for i in range(l1):
             for j in range(l2):
+                if scores[i, j] == ALWAYS_CHOOSE:
+                    continue
                 dist_to_diagonal = abs((i - range1[0]) * (range2[1] - range2[0]) - (range1[1] - range1[0]) * (j - range2[0]))
                 if verbose:
                     print("dist: ", i, j, dist_to_diagonal)
@@ -319,6 +327,8 @@ def align_sentence_pair(word_vector, s1, s2, D=3, verbose=False):
         vicinity_range, vicinity_bonus = 3, 0.1
         for i in range(l1):
             for j in range(l2):
+                if scores[i, j] == ALWAYS_CHOOSE:
+                    continue
                 # 相邻位置有一个很确信的元素，本身又包含至少一个小句
                 if (i > 0 and scores[i-1, j] > threshold) or (j > 0 and scores[i, j-1] > threshold) \
                         or (i+1 < l1 and scores[i+1, j] > threshold) or (j+1 < l2 and scores[i, j+1] > threshold):
@@ -384,6 +394,35 @@ def align_all_corpus(word_vector, corpus1, corpus2, output_file, corpus_format="
 
 def unit_test():
     verbose_option = False
+
+    sent1 = u"我重 又 低头 看书 ， 那 是 本 比 尤伊克 的 《 英国 鸟类 史 》 。 文字 部份 我 一般 不感兴趣 ， 但 有 几页 导言 ， 虽说 我 是 孩子 ， 却 不愿 当作 空页 随手 翻过 。 内中 写 到 了 海鸟 生息 之地 ； 写 到 了 只有 海鸟 栖居 的 “ 孤零零 的 岩石 和 海 岬 ” ； 写 到 了 自 南端 林纳斯 尼斯 ， 或纳斯 ， 至 北角 都 遍布 小岛 的 挪威 海岸 ："
+    sent2 = u"我重 又 低头 看 我 的 书 — — 我 看 的 是 比 尤伊克 插图 的 《 英国 禽鸟 史 》 。 一般来说 ， 我 对 这 本书 的 文字 部分 不 大 感兴趣 ， 但是 有 几页 导言 ， 虽说 我 还是 个 孩子 ， 倒 也 不能 当作 空页 一翻 而 过 。 其中 讲 到 海鸟 经常 栖息 的 地方 ， 讲 到 只有 海鸟 居住 的 “ 孤寂 的 岩石 和 海 岬 ” ， 讲 到 挪威 的 海岸 ， 从 最南端 的 林讷 斯内斯 角到 最北 的 北角 ， 星罗棋布 着 无数 岛屿 — —"
+    print("=" * 100)
+    matching_result, s1_clauses, s2_clauses = align_sentence_pair(vectors, sent1, sent2, verbose=True)
+    print("refined result: " + matching_result)
+
+
+    sent1 = u"那天 ， 出去 散步 是 不 可能 了 。 其实 ， 早上 我们 还 在 光秃秃 的 灌木林 中 溜达 了 一个 小时 ， 但 从 午饭 时起 （ 无客 造访 时 ， 里德 太太 很 早就 用 午饭 ） 便 刮起 了 冬日 凛冽 的 寒风 ， 随后 阴云密布 ， 大雨滂沱 ， 室外 的 活动 也 就 只能 作罢 了 。"
+    sent2 = u"那天 ， 再 出去 散步 是 不 可能 了 。 没错 ， 早上 我们 还 在 光秃秃 的 灌木林 中 漫步 了 一个 小时 ， 可是 打 从 吃 午饭 起 （ 只要 没有 客人 ， 里德 太太 总是 很早 吃 午饭 ） ， 就 刮起 了 冬日 凛冽 的 寒风 ， 随之而来 的 是 阴沉 的 乌云 和 透骨 的 冷雨 ， 这一来 ， 自然 也 就 没法 再 到 户外 去 活动 了 。"
+    print("=" * 100)
+    matching_result, s1_clauses, s2_clauses = align_sentence_pair(vectors, sent1, sent2, verbose=verbose_option)
+    print("refined result: " + matching_result)
+
+
+    sent1 = u"我 倒 是 求之不得 。 我 向来 不 喜欢 远距离 散步 ， 尤其 在 冷飕飕 的 下午 。 试想 ， 阴冷 的 薄暮 时分 回得家 来 ， 手脚 都 冻僵 了 ， 还要 受到 保姆 贝茵 的 数落 ， 又 自觉 体格 不如 伊 丽莎 、 约翰 和 乔治亚 娜 ， 心里 既 难过 又 惭愧 ， 那 情形 委实 可怕 。"
+    sent2 = u"这倒 让 我 高兴 ， 我 一向 不 喜欢 远出 散步 ， 尤其 是 在 寒冷 的 下午 。 我 觉得 ， 在 阴冷 的 黄昏时分 回家 实在 可怕 ， 手指 脚趾 冻僵 了 不 说 ， 还要 挨 保姆 贝茜 的 责骂 ， 弄 得 心里 挺 不 痛快 的 。 再说 ， 自己 觉得 身体 又 比 里德 家 的 伊 丽莎 、 约翰 和 乔治 安娜 都 纤弱 ， 也 感到 低人一等 。"
+    print("=" * 100)
+    matching_result, s1_clauses, s2_clauses = align_sentence_pair(vectors, sent1, sent2, verbose=verbose_option)
+    print("refined result: " + matching_result)
+
+
+
+    sent1 = u"“ 见鬼 ， 上 哪儿 去 了 呀 ？ ” 他 接着 说 。 “ 丽茜 ！ 乔琪 ！ ” （ 喊 着 他 的 姐妹 ） “ 琼 不 在 这儿 呐 ， 告诉 妈妈 她 窜 到 雨 地里 去 了 ， 这个 坏 畜牲 ！ ”"
+    sent2 = u"“ 见鬼 ， 她 上 哪儿 去 了 ？ ” 他 接着 说 ： “ 丽茜 ！ 乔琪 ！ （ 他 在 叫 他 的 姐妹 ） 琼 不 在 这儿 。 告诉 妈妈 ， 她 跑 到 外面 雨 地里 去 了 — — 这个 坏东西 ！ ”"
+    print("=" * 100)
+    matching_result, s1_clauses, s2_clauses = align_sentence_pair(vectors, sent1, sent2, verbose=verbose_option)
+    print("refined result: " + matching_result)
+
 
     sent1 = u"里德 太太 对此 则 完全 装聋作哑 ， 她 从 来看 不见 他 打 我 ， 也 从来 听不见 他 骂 我 ， 虽然 他 经常 当着 她 的 面 打 我 骂 我 。"
     sent2 = u"里德 太太 呢 ， 在 这种 事情 上 ， 总是 装聋作哑 ， 她 从 来看 不见 他 打 我 ， 也 从来 听不见 他 骂 我 ， 虽然 他 常常 当着 她 的 面 既 打 我 又 骂 我 。"
@@ -513,10 +552,10 @@ if __name__ == "__main__":
         vectors.syn0 = vectors.syn0 / norms
     print(vectors.syn0.shape)
 
-    # unit_test()
+    unit_test()
 
-    align_all_corpus(vectors,
-                     os.path.join(args.data_dir, args.corpus1),
-                     os.path.join(args.data_dir, args.corpus2),
-                     output_file=os.path.join(args.data_dir, args.output_file_name),
-                     corpus_format=args.version)
+    # align_all_corpus(vectors,
+    #                  os.path.join(args.data_dir, args.corpus1),
+    #                  os.path.join(args.data_dir, args.corpus2),
+    #                  output_file=os.path.join(args.data_dir, args.output_file_name),
+    #                  corpus_format=args.version)
